@@ -1,10 +1,12 @@
 
+from typing import List
 from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup as bs
+
 import requests
+from bs4 import BeautifulSoup as bs
 
 
-def search_hh(vacancy, max_pages):
+def search_hh(vacancy: str, max_pages: int) -> List:
     vac_list = []
     page_counter = 0
 

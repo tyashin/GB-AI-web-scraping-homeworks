@@ -6,6 +6,7 @@ name = "pypi"
 [packages]
 beautifulsoup4 = "*"
 pymongo = "*"
+requests = "*"
 
 [dev-packages]
 
