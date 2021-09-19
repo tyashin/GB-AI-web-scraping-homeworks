@@ -10,6 +10,7 @@
 
 '''
 import json
+from datetime import datetime, timedelta
 from pprint import pprint
 
 import newspaper
@@ -32,7 +33,6 @@ def augment_news_item(news_item):
             news_item['publish_date'] = article.publish_date.strftime(
                 '%d/%m/%Y')
 
-        pprint(news_item)
     except:
         pass
 
@@ -109,14 +109,20 @@ def scrape_yandex_news():
         news_item['summary'] = " ".join(item.xpath(
             ".//div[@class='mg-card__annotation']/text()")).replace('\xa0', ' ')
 
-        # Яндекс, похоже, банит многократный переход по новостным ссылкам с одного адреса.
-        # Поэтому с помощью requests/Xpath  отдельные статьи загружать не получается
-        # и, следовательно, дату публикации для Яндекса не заполняем.
-        # Наверное, на продакшене пришлось бы использовать Selenium (или подобное решение).
-        news_item['publish_date'] = ''
+        p_date = (item.xpath(
+            ".//span[@class='mg-card-source__time']/text()")[0]).strip()
+
+        if len(p_date) == 5:
+            p_date = datetime.now().strftime('%d/%m/%Y')
+
+        elif p_date.lower().find('вчера'):
+            p_date = (datetime.now() - timedelta(1)).strftime('%d/%m/%Y')
+        else:
+            p_date = ''
+
+        news_item['publish_date'] = p_date
 
         news_list.append(news_item)
-        pprint(news_item)
 
     return news_list
 
@@ -134,8 +140,8 @@ def scrape_news_mail_ru():
         return news_list
 
     dom = html.fromstring(response.text)
-    hrefs = dom.xpath("//a[@class='newsitem__title link-holder']/@href")
-    hrefs.extend(dom.xpath("//a[@class='link link_flex']/@href"))
+    hrefs = dom.xpath(
+        "//a[@class='newsitem__title link-holder']/@href | //a[@class='link link_flex']/@href")
 
     for href in hrefs:
 
@@ -182,7 +188,6 @@ def scrape_news_mail_ru():
             news_item['publish_date'] = ''
 
         news_list.append(news_item)
-        pprint(news_item)
 
     return news_list
 
@@ -194,6 +199,7 @@ news_data = []
 news_data.extend(scrape_lenta_ru())
 news_data.extend(scrape_yandex_news())
 news_data.extend(scrape_news_mail_ru())
+pprint(news_data)
 
-with open('news.json', 'w', encoding='utf8') as news:
-    json.dump(news_data, news, ensure_ascii=False)
+with open('news.json', 'w', encoding='utf8') as f:
+    json.dump(news_data, f, ensure_ascii=False)
