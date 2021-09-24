@@ -7,7 +7,6 @@ import scrapy
 
 
 class BookscraperItem(scrapy.Item):
-    
     url = scrapy.Field()
     name = scrapy.Field()
     authors = scrapy.Field()
