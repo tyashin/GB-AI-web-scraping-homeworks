@@ -1,20 +1,23 @@
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.wait import WebDriverWait
-
 import os
 import time
 
-if __name__ == "__main__":
-    #login = input('Login Mail.ru: ')
-    #psswrd = input('Password Mail.ru: ')
+from pymongo import MongoClient
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.wait import WebDriverWait
 
-    os.name == 'nt'
+if __name__ == "__main__":
+    client = MongoClient('localhost', 27017)
+    mongobase = client.mail_ru
+    collection = mongobase['messages']
+
+    login = input('Login Mail.ru: ')
+    psswrd = input('Password Mail.ru: ')
 
     driver = webdriver.Chrome(os.path.join(
         os.getcwd(), 'chromedriver.exe' if os.name == 'nt' else 'chromedriver'))
+
     driver.get("https://light.mail.ru/")
 
     username = WebDriverWait(driver, 5).until(
@@ -26,10 +29,9 @@ if __name__ == "__main__":
         EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']")))
 
     btn_enter_password.click()
+    time.sleep(3)
     btn_sign_in = WebDriverWait(driver, 5).until(
         EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']")))
-    # без этого хака (попытка входа до ввода пароля) вход не не работает
-    btn_sign_in.click()
 
     password = WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.XPATH, "//input[@name = 'password']")))
@@ -37,10 +39,27 @@ if __name__ == "__main__":
     password.clear()
     password.send_keys(psswrd)
     btn_sign_in.click()
-    time.sleep(5)
+    time.sleep(3)
     message_links = driver.find_elements_by_xpath(
         "//a[@class='messageline__link']")
 
     hrefs = {m.get_attribute('href') for m in message_links}
 
     for href in hrefs:
+        driver.get(href)
+        message = {}
+        message['from'] = driver.find_element_by_xpath(
+            "//tr[@id='msgFieldFrom']//span[@class='val']").text
+
+        message['date'] = driver.find_element_by_xpath(
+            "//div[@class = 'mr_read__date']").text
+
+        message['topic'] = driver.find_element_by_xpath(
+            "//div[@id = 'msgFieldSubject']").text
+
+        message['text'] = driver.find_element_by_xpath(
+            "//div[@id='viewmessagebody_BODY']").text.replace(' \u200c', '')
+
+        collection.insert_one(message)
+
+    driver.quit()
