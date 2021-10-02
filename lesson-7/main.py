@@ -11,15 +11,12 @@ if __name__ == "__main__":
     client = MongoClient('localhost', 27017)
     mongobase = client.mail_ru
     collection = mongobase['messages']
-
     login = input('Login Mail.ru: ')
     psswrd = input('Password Mail.ru: ')
-
     driver = webdriver.Chrome(os.path.join(
         os.getcwd(), 'chromedriver.exe' if os.name == 'nt' else 'chromedriver'))
 
     driver.get("https://light.mail.ru/")
-
     username = WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.XPATH, "//input[@name='username']")))
 
@@ -39,15 +36,29 @@ if __name__ == "__main__":
     password.clear()
     password.send_keys(psswrd)
     btn_sign_in.click()
-    time.sleep(3)
-    message_links = driver.find_elements_by_xpath(
-        "//a[@class='messageline__link']")
+    hrefs = set()
 
-    hrefs = {m.get_attribute('href') for m in message_links}
+    while True:
+        time.sleep(5)
+        message_links = driver.find_elements_by_xpath(
+            "//a[@class='messageline__link']")
+
+        hrefs.update([m.get_attribute('href') for m in message_links])
+
+        try:
+            bttn_nxt = driver.find_element_by_xpath(
+                "//a[contains(@class,'paging__item_next')]")
+
+            bttn_nxt.click()
+        except:
+            break
 
     for href in hrefs:
         driver.get(href)
         message = {}
+        message['text'] = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.XPATH, "//div[@id='viewmessagebody_BODY']"))).text.replace('\u200c', '')
+
         message['from'] = driver.find_element_by_xpath(
             "//tr[@id='msgFieldFrom']//span[@class='val']").text
 
@@ -56,9 +67,6 @@ if __name__ == "__main__":
 
         message['topic'] = driver.find_element_by_xpath(
             "//div[@id = 'msgFieldSubject']").text
-
-        message['text'] = driver.find_element_by_xpath(
-            "//div[@id='viewmessagebody_BODY']").text.replace(' \u200c', '')
 
         collection.insert_one(message)
 
