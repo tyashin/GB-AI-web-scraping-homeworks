@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import configparser
 import json
 import re
 from copy import deepcopy
@@ -6,8 +7,10 @@ from urllib.parse import urlencode
 
 import scrapy
 from scrapy.http import HtmlResponse
+from scrapy.loader import ItemLoader
 
 from instaparser.items import InstaparserItem
+from itertools import takewhile
 
 
 class InstagramSpider(scrapy.Spider):
@@ -15,13 +18,17 @@ class InstagramSpider(scrapy.Spider):
     name = 'instagram'
     allowed_domains = ['instagram.com']
     start_urls = ['https://instagram.com/']
-    insta_login = 'здесь логин'
-    insta_pwd = 'Здесь зашифрованный пароль'
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+    insta_login = config['DEFAULT']['INSTAGRAM_LOGIN']
+    insta_pwd = config['DEFAULT']['INSTAGRAM_SEC_PASSWORD']
+    max_pages = int(config['DEFAULT']['MAX_PAGES']) # Не хочу ждать, пока обработается 170тыс фолловеров.
+    page_count = 0
+
     inst_login_link = 'https://www.instagram.com/accounts/login/ajax/'
-    parse_user = 'ai_machine_learning'  # Пользователь, у которого собираем посты. Можно указать список
+    parse_user = ['ai_machine_learning', 'cashcats']  # Пользователь, у которого собираем посты. Можно указать список
 
     graphql_url = 'https://www.instagram.com/graphql/query/?'
-    posts_hash = 'eddbde960fed6bde675388aac39a3657'  # hash для получения данных по постах с главной страницы
 
     def parse(self, response: HtmlResponse):  # Первый запрос на стартовую страницу
         csrf_token = self.fetch_csrf_token(response.text)  # csrf token забираем из html
@@ -36,49 +43,67 @@ class InstagramSpider(scrapy.Spider):
     def user_parse(self, response: HtmlResponse):
         j_body = json.loads(response.text)
         if j_body['authenticated']:  # Проверяем ответ после авторизации
-            yield response.follow(
-                # Переходим на желаемую страницу пользователя. Сделать цикл для кол-ва пользователей больше 2-ух
-                f'/{self.parse_user}',
-                callback=self.user_data_parse,
-                cb_kwargs={'username': self.parse_user}
-            )
+            for instauser in self.parse_user:
+                yield response.follow(
+                    # Переходим на желаемую страницу пользователя. Сделать цикл для кол-ва пользователей больше 2-ух
+                    f'/{instauser}',
+                    callback=self.connections_parse,
+                    cb_kwargs={'username': instauser}
+                )
 
-    def user_data_parse(self, response: HtmlResponse, username):
+    def connections_parse(self, response, username):
         user_id = self.fetch_user_id(response.text, username)  # Получаем id пользователя
-        variables = {'id': user_id,  # Формируем словарь для передачи даных в запрос
-                     'first': 12}  # 12 постов. Можно больше (макс. 50)
-        url_posts = f'{self.graphql_url}query_hash={self.posts_hash}&{urlencode(variables)}'  # Формируем ссылку для получения данных о постах
-        yield response.follow(
-            url_posts,
-            callback=self.user_posts_parse,
-            cb_kwargs={'username': username,
-                       'user_id': user_id,
-                       'variables': deepcopy(variables)}  # variables ч/з deepcopy во избежание гонок
-        )
+        variables = {'count': 12,  # Формируем словарь для передачи даных в запрос
+                     'search_surface': 'follow_list_page'
+                     }
 
-    def user_posts_parse(self, response: HtmlResponse, username, user_id,
-                         variables):  # Принимаем ответ. Не забываем про параметры от cb_kwargs
+        url_followers = f'https://i.instagram.com/api/v1/friendships/{user_id}/followers/?{urlencode(variables)}'
+        yield response.follow(url_followers,
+                              headers={'User-Agent': 'Instagram 64.0.0.14.96'},
+                              callback=self.body_parse,
+                              cb_kwargs={'username': username,
+                                         'user_id': user_id,
+                                         'connection_type': 'followers',
+                                         'variables': deepcopy(variables)})
+
+        url_following = f'https://i.instagram.com/api/v1/friendships/{user_id}/following/?{urlencode(variables)}'
+        yield response.follow(url_following,
+                              headers={'User-Agent': 'Instagram 64.0.0.14.96'},
+                              callback=self.body_parse,
+                              cb_kwargs={'username': username,
+                                         'user_id': user_id,
+                                         'connection_type': 'following',
+                                         'variables': deepcopy(variables)})
+
+    def body_parse(self, response, username, user_id, connection_type,
+                   variables):  # Принимаем ответ. Не забываем про параметры от cb_kwargs
         j_data = json.loads(response.text)
-        page_info = j_data.get('data').get('user').get('edge_owner_to_timeline_media').get('page_info')
-        if page_info.get('has_next_page'):  # Если есть следующая страница
-            variables['after'] = page_info['end_cursor']  # Новый параметр для перехода на след. страницу
-            url_posts = f'{self.graphql_url}query_hash={self.posts_hash}&{urlencode(variables)}'
-            yield response.follow(
-                url_posts,
-                callback=self.user_posts_parse,
-                cb_kwargs={'username': username,
-                           'user_id': user_id,
-                           'variables': deepcopy(variables)}
-            )
-        posts = j_data.get('data').get('user').get('edge_owner_to_timeline_media').get('edges')  # Сами посты
-        for post in posts:  # Перебираем посты, собираем данные
-            item = InstaparserItem(
-                user_id=user_id,
-                photo=post['node']['display_url'],
-                likes=post['node']['edge_media_preview_like']['count'],
-                post=post['node']
-            )
-        yield item  # В пайплайн
+        users = j_data.get('users')
+        for user in users:
+            loader = ItemLoader(item=InstaparserItem(), response=response)
+            loader.add_value('parent_name', username)
+            loader.add_value('parent_id', user_id)
+            loader.add_value('user_id', user.get('pk'))
+            loader.add_value('user_name', user.get('full_name'))
+            loader.add_value('user_photo', user.get('profile_pic_url'))
+            loader.add_value('user_photo_file', user.get('profile_pic_url'))
+            loader.add_value('image_urls', [user.get('profile_pic_url')])
+            loader.add_value('connection_type', connection_type)
+            yield loader.load_item()
+
+        next_page = j_data.get('next_max_id')
+        self.page_count += 1
+        if next_page and self.page_count <= self.max_pages:
+            variables['max_id'] = next_page
+            url = f'https://i.instagram.com/api/v1/friendships/{user_id}/{connection_type}/?{urlencode(variables)}'
+
+            yield response.follow(url,
+                                  headers={'User-Agent': 'Instagram 64.0.0.14.96'},
+                                  callback=self.body_parse,
+                                  cb_kwargs={'username': username,
+                                             'user_id': user_id,
+                                             'connection_type': connection_type,
+                                             'variables': deepcopy(variables)})
 
     # Получаем токен для авторизации
     def fetch_csrf_token(self, text):
