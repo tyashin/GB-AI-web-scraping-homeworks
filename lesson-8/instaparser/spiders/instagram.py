@@ -10,7 +10,6 @@ from scrapy.http import HtmlResponse
 from scrapy.loader import ItemLoader
 
 from instaparser.items import InstaparserItem
-from itertools import takewhile
 
 
 class InstagramSpider(scrapy.Spider):
